@@ -1,4 +1,7 @@
 
+#Taken from Characterizing Graph Datasets for Node Classification: Homophily–Heterophily Dichotomy and Beyond paper##
+
+
 import numpy as np
 import networkx as nx
 
