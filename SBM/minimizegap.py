@@ -1,170 +1,215 @@
-import networkx as nx
-import scipy.sparse as sp
-import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from sklearn.metrics import normalized_mutual_info_score as NMI
+import torch
+from torch_geometric.nn import GCNConv
+from torch.nn import Linear
+import torch.nn.functional as F
+from torch_geometric.data import Data
+from torch_geometric.utils import to_undirected,to_networkx,from_networkx
 from tqdm import tqdm
-import warnings
-warnings.filterwarnings('ignore')
-eps = 1e-6
+import networkx as nx
+import argparse
+from minimizegap import minimize_and_update_edges
+import csv
+from nodeli import *
+from metrics import cluster_acc
+import random
+import numpy as np
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(1234567)
+
+parser = argparse.ArgumentParser(description='Run SBM')
+parser.add_argument('--path', type=str, default='Dataset/SBM_30_0.3_0.03_1e-10.pt', help='path to directory containing npz file')
+parser.add_argument('--csvout', type=str, default='CommunityAlign/metrics.csv', help='CSV filename to record metrics')
+args = parser.parse_args()
+
+dataset_name = os.path.splitext(os.path.basename(args.path))[0]
+
+def visualize(h, color,legend_labels,title, filename,random_state = 13):
+    z = TSNE(n_components=2).fit_transform(h.detach().cpu().numpy())
+    plt.figure(figsize=(5,5))
+    plt.xticks([])
+    plt.yticks([])
+    scatter = plt.scatter(z[:, 0], z[:, 1], s=70, c=color, cmap="Set2")
+        # Add legend if legend_labels are provided
+    if legend_labels:
+        legend = plt.legend(handles= scatter.legend_elements()[0], title="Classes", labels=legend_labels)
+        plt.setp(legend.get_title(), fontsize='12')
+
+    if title:
+        plt.title(title, fontsize=14)
+    plt.savefig(filename)
+
+
+
+
+def get_graph_and_labels_from_pyg_dataset(dataset):
+    graph = nx.Graph()
+    graph.add_nodes_from(range(len(dataset.x)))
+    graph.add_edges_from(dataset.edge_index.T.numpy())
+
+    labels = dataset.y.numpy()
+
+    return graph, labels
+
 
 def npgap(G):
   Lmod = nx.normalized_laplacian_matrix(G).todense()
   valsmod,vecsmod = np.linalg.eigh(Lmod)
   return round(valsmod[1],4)
 
-def proxy_delete(i,j,deg, vecsold, gap):
-    deg = deg[:, np.newaxis]
-    vecsold = np.divide(vecsold, np.sqrt(deg))
-    vecsold = vecsold / np.linalg.norm(vecsold, axis=1)[:, np.newaxis]
-    delta_gap = -((vecsold[i,1]-vecsold[j,1])**2-gap*(vecsold[i,1]**2 + vecsold[j,1]**2))
-    index_best_edge = np.argmax(delta_gap)
-    return [i][index_best_edge],[j][index_best_edge],delta_gap
 
-def return_existing_edges(G):
-  return (list(G.edges))
-
-def obtain_Lnorm(G):
-    adj = nx.adjacency_matrix(G)
-    adj = adj.tolil()
-    adj.setdiag(1)
-    adj= adj.tocsr()
-    deg = np.array(adj.sum(axis=1)).flatten()
-    D_sqrt_inv = sp.diags(np.power(deg+eps, -0.5))
-    L_norm = (sp.eye(adj.shape[0]) - D_sqrt_inv @ adj @ D_sqrt_inv)
-    return deg,L_norm
-
-def spectral_gap(L_norm):
-        gap, vectors = sp.linalg.eigsh(L_norm, k=2,sigma = 0.1,which='LM')
-        return gap[1], vectors
-
-# def update_gap(vecs,L_norm):
-#         gap, vectors = sp.linalg.eigsh(L_norm, k=2,sigma=0,which='LM',v0 = vecs[:,1])
-#         return vectors
-
-def update_Lnorm(u,v,L_norm,deg):
-        L_norm[u, :] *= np.sqrt(deg[u] / (deg[u] - 1))
-        L_norm[:, u] = L_norm[u, :].T
-        L_norm[v, :] *= np.sqrt(deg[v] / (deg[v] - 1))
-        L_norm[:, v] = L_norm[v, :].T
-        deg[u] -= 1
-        deg[v] -= 1
-        L_norm[u,u] = 1-1/deg[u]
-        L_norm[v,v] = 1-1/deg[v]
-        L_norm[u, v] = 0
-        L_norm[v, u] = 0
-        return deg,L_norm
-
-def process_edges(g):
-    existing_edges = return_existing_edges(g)
-    deg, L_norm = obtain_Lnorm(g)
-    gap, vecs = spectral_gap(L_norm)
-    edge_dgap_mapping = {}
-    for edges in tqdm(existing_edges):
-        i, j = edges
-        u, v, dgap = proxy_delete(i, j, deg, vecs, gap)
-        v, u = u, v
-        deg, L_norm = update_Lnorm(u, v, L_norm, deg)
-        _, vecs = spectral_gap(L_norm)
-        edge_dgap_mapping[(u, v)] = dgap
-
-    sorted_edges = sorted(edge_dgap_mapping.items(), key=lambda x: x[1], reverse=True)
-
-    return sorted_edges
+filename = args.csvout  
 
 
-def minimize_and_update_edges(g):
-    best_edges = process_edges(g)
-    gap_holder = []
-    previous_gap = npgap(g)
+dataset,_ = torch.load(args.path)
+x = dataset['x']
+edge_index = dataset['edge_index']
+y = dataset['y']
+SBMdata = Data(x=x,edge_index=edge_index,y=y,num_classes=2)
+print(SBMdata)
 
-    for edges, dgap in best_edges:
-        s, t = edges
-        print("Deleting edge", (s, t))
-        print("Dgap value", dgap)
-        g.remove_edge(s, t)
 
-        #Check if the graph is disconnected
-        if not nx.is_connected(g):
-           print("Graph disconnected. Putting edge back", (s, t))
-           g.add_edge(s, t)
-           continue
+graph, labels = get_graph_and_labels_from_pyg_dataset(SBMdata)
+print("Calculating Different Informativeness Measures...")
+nodelibef = li_node(graph, labels)
+edgelibef = li_edge(graph, labels)
+hadjbef = h_adj(graph, labels)
+print(f'node label informativeness: {nodelibef:.2f}')
+print(f'adjusted homophily: {hadjbef:.2f}')
+print(f'edge label informativeness: {edgelibef:.2f}')
+print("=============================================================")
 
-        newgap = npgap(g)
-        print("Spectral gap after deletion:", newgap)
-        print("=" * 40)
+print()
+print("Pruning the graph for minimizing the spectral gap...")
+SBMdatanx = to_networkx(SBMdata, to_undirected =True)
+beforegap = npgap(SBMdatanx)
+proxykardeletegap,Gpr = minimize_and_update_edges(SBMdatanx)
+print()
 
-        if newgap < previous_gap:
-            gap_holder.append(newgap)
-            previous_gap = newgap
+pos = nx.kamada_kawai_layout(Gpr)
+node_colors = [SBMdata.y[node] for node in Gpr.nodes]
+nx.draw(Gpr, pos=pos, with_labels=False, node_color=node_colors, cmap='Set2')
+plt.savefig("Plots/MinimizeGap/SBM250Min/Min_{dataset_name}_GraphAfterPruning.jpg")
 
-            # Recalculate best edges and update dgap
-            print("updating the best edges...")
-            best_edges = process_edges(g)
-            for edge, updated_dgap in best_edges:
-                if edge == (s, t):
-                    dgap = updated_dgap
-                    break
+aftergap = npgap(Gpr)
+print("Converting to PyG dataset")
+newdata = from_networkx(Gpr)
+newdata.x = SBMdata.x
+newdata.y = SBMdata.y
+newdata.num_classes = SBMdata.num_classes
+print(newdata)
 
-        else:
-            g.add_edge(s, t)
-            print("Putting edge back", (s, t))
-            print("Spectral gap after adding edge back:", previous_gap)
-            print("=" * 40)
 
-    # Print the final gap_holder
-    print("Final gap_holder:", gap_holder)
-    return gap_holder,g
+print("Calculating informativeness measure after pruning...")
 
-# def process_and_update_edges(g, k):
-#     gap_holder = []
-#     print("Processing Edges...")
-#     best_edges = process_edges(g)
-#     print("Done!")
-#     print(f"Deleting {k} edges...")
-#     previous_gap = npgap(g)
+graphaf, labelsaf = get_graph_and_labels_from_pyg_dataset(newdata)
+nodeliaf = li_node(graphaf, labelsaf)
+edgeliaf = li_edge(graphaf, labelsaf)
+hadjaf = h_adj(graphaf, labelsaf)
+print(f'node label informativeness: {nodeliaf:.2f}')
+print(f'adjusted homophily: {hadjaf:.2f}')
+print(f'edge label informativeness: {edgeliaf:.2f}')
+print("=============================================================")
+print()
 
-#     deleted_edges_count = 0  # Counter for deleted edges
-#     update_criterion_after = 100  # Number of edges to delete before updating the criterion
-#     criterion_update_counter = 0  # Counter for updating the criterion
 
-#     for edges, dgap in best_edges:
-#         s, t = edges
-#         print("Deleting edge", (s, t))
-#         g.remove_edge(s, t)
+print("Performing Train/Test splits...")
+split = torch.randperm(SBMdata.num_nodes)
+samples = int(0.6*len(split))
+train_idx = split[:samples]
+test_idx = split[samples:]
+print(f"Number of training nodes - {len(train_idx)}")    
+print(f"Number of testing nodes - {len(test_idx)}")   
 
-#         if not nx.is_connected(g):
-#             print("Graph disconnected. Putting edge back", (s, t))
-#             g.add_edge(s, t)
-#         else:
-#             deleted_edges_count += 1
-#             new_gap = npgap(g)
-#             print(f"Spectral Gap after deleting {s,t} {new_gap}")
 
-#             if new_gap > previous_gap:
-#                 gap_holder.append(new_gap)
-#                 previous_gap = new_gap
-#                 print("============" * 40)
-#             else:
-#                 print(f"Gap Decreased. Putting edge {s,t} back")
-#                 g.add_edge(s, t)
-#                 print(f"Gap restored to {previous_gap}")
-#                 deleted_edges_count -= 1
-#                 print("============" * 40)
+class GCN(torch.nn.Module):
+    def __init__(self, hidden_channels):
+        super().__init__()
+        torch.manual_seed(1234567)
+        #self.conv1 = GCNConv(newdata.num_features, hidden_channels)
+        #self.conv2 = GCNConv(hidden_channels, newdata.num_classes)
+        self.conv1 = GCNConv(newdata.num_features, hidden_channels)
+        self.conv2 = GCNConv(hidden_channels, newdata.num_classes)
 
-#         criterion_update_counter += 1
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = x.relu()
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.conv2(x, edge_index)
+        return x
 
-#         if criterion_update_counter == update_criterion_after:
-#             print("Updating the criterion")
-#             best_edges = process_edges(g)
-#             for edge, updated_dgap in best_edges:
-#                       if edge == (s, t):
-#                           dgap = updated_dgap
-#                           break
-#             criterion_update_counter = 0  # Reset the update counter
+model = GCN(hidden_channels=512)
+print(model)
 
-#         print("============" * 40)
-#         print()
+print("Visualizing the node embeddings before training...")
+model.eval()
+out = model(newdata.x, newdata.edge_index)
+visualize(out, color=newdata.y,legend_labels=["Class 1", "Class 2"],title='Embeddings before training',filename="Plots/MinimizeGap/SBM250Min/Min_{dataset_name}_EmbBefore.jpg")
 
-#         if deleted_edges_count >= k:
-#             break
-#     print(f"Edges deleted = {deleted_edges_count}")
-#     return g, gap_holder
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+criterion = torch.nn.CrossEntropyLoss()
+train_losses = []
+nmi_values = []
+
+def train():
+    model.train()
+    optimizer.zero_grad()  # Clear gradients.
+    out = model(newdata.x, newdata.edge_index)  # Perform a single forward pass.
+
+    # Use the CrossEntropyLoss directly without masking here
+    loss = criterion(out[train_idx], newdata.y[train_idx])
+
+    # Compute the gradients and update parameters
+    loss.backward()
+    optimizer.step()
+
+    return loss.item()
+
+def test():
+    model.eval()
+    clust = model(newdata.x, newdata.edge_index)
+    return NMI(newdata.y[test_idx].cpu(), out[test_idx].max(1)[1].cpu()),cluster_acc(newdata.y.cpu().numpy(), clust.max(1)[1].cpu().numpy())[0]
+
+patience = 50
+best_loss = 1
+nmi_at_best_loss = 0
+acc_at_best_loss = 0
+for epoch in range(1, 1001):
+    train_loss = train()
+    train_losses.append(train_loss)
+    nmi, acc = test()
+    print(f"Epoch: {epoch:03d}, Loss: {train_loss:.4f}, NMI: {nmi:.3f}, ACC: {acc*100: .3f}")
+    if train_loss < best_loss:
+        best_loss = train_loss
+        nmi_at_best_loss = nmi
+        acc_at_best_loss = acc
+        patience = 50
+    else:
+        patience -= 1
+    if patience == 0:
+        break
+print(f"NMI: {nmi_at_best_loss:.3f}, ACC: {acc_at_best_loss*100:.1f}")
+print("===============================================================")
+
+plt.figure(figsize=(10, 5))
+plt.plot(train_losses, label='Training Loss')
+plt.title('Training Loss Over Epochs')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.savefig("Plots/MinimizeGap/SBM250Min/Loss250Min.png")
+
+print("After training GCN, visualizing node embeddings...")
+model.eval()
+out = model(newdata.x, newdata.edge_index)
+visualize(out[test_idx], color=newdata.y[test_idx],legend_labels=["Class 1", "Class 2"],title=f'After training - NMI: {nmi:.3f} ACC: {acc_at_best_loss*100:.1f}',filename = 'Plots/MinimizeGap/SBM250Min/Min_{dataset_name}_Testemb.jpg')
+print("Writing Metrics...")
+headers = ['Dataset','GapBefore','GapAfter','BeforeNodeLI','BeforeAdjHomophily','AfterNodeLI','AfterAdjHomophily','TrainingLoss','NMI','TestAcc']
+with open(filename, mode='a', newline='') as file:
+              writer = csv.writer(file)
+              if file.tell() == 0:
+                      writer.writerow(headers)
+              writer.writerow([args.path,beforegap,aftergap,nodelibef,hadjbef,nodeliaf,hadjaf,train_loss,nmi,acc_at_best_loss])
