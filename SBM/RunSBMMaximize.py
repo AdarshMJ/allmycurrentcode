@@ -1,3 +1,4 @@
+import os
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.metrics import normalized_mutual_info_score as NMI
@@ -25,7 +26,7 @@ parser.add_argument('--path', type=str, default='Dataset/SBM_30_0.3_0.03_1e-10.p
 parser.add_argument('--csvout', type=str, default='CommunityAlign/metrics.csv', help='CSV filename to record metrics')
 args = parser.parse_args()
 
-
+dataset_name = os.path.splitext(os.path.basename(args.path))[0]
 def visualize(h, color,legend_labels,title, filename,random_state = 13):
     z = TSNE(n_components=2).fit_transform(h.detach().cpu().numpy())
     plt.figure(figsize=(5,5))
@@ -74,7 +75,7 @@ beforegap = npgap(before)
 pos = nx.kamada_kawai_layout(before)
 node_colors = [SBMdata.y[node] for node in before.nodes]
 nx.draw(before, pos=pos, with_labels=False, node_color=node_colors, cmap='Set2')
-plt.savefig("Plots/MaximizeGap/SBM250Max/SBM250BeforePruning.jpg")
+plt.savefig(f"Plots/MaximizeGap/SBM250Max/Max_{dataset_name}_BeforePruning.jpg")
 
 
 graph, labels = get_graph_and_labels_from_pyg_dataset(SBMdata)
@@ -99,7 +100,7 @@ aftergap = npgap(Gpr)
 pos = nx.kamada_kawai_layout(Gpr)
 node_colors = [SBMdata.y[node] for node in Gpr.nodes]
 nx.draw(Gpr, pos=pos, with_labels=False, node_color=node_colors, cmap='Set2')
-plt.savefig("Plots/MaximizeGap/SBM250Max/SBM250AfterPruning.jpg")
+plt.savefig(f"Plots/MaximizeGap/SBM250Max/Max_{dataset_name}_AfterPruning.jpg")
 
 
 print("Converting to PyG dataset")
@@ -125,7 +126,7 @@ print()
 
 print("Performing Train/Test splits...")
 split = torch.randperm(SBMdata.num_nodes)
-samples = int(0.8*len(split))
+samples = int(0.6*len(split))
 train_idx = split[:samples]
 test_idx = split[samples:]
 print(f"Number of training nodes - {len(train_idx)}")    
@@ -153,7 +154,7 @@ print(model)
 print("Visualizing the node embeddings before training...")
 model.eval()
 out = model(newdata.x, newdata.edge_index)
-visualize(out, color=newdata.y,legend_labels=["Class 1", "Class 2"],title='Embeddings before training',filename="Plots/MaximizeGap/SBM250Max/BeforeTraining+PruneMax250.jpg")
+visualize(out, color=newdata.y,legend_labels=["Class 1", "Class 2"],title='Embeddings before training',filename=f"Plots/MaximizeGap/SBM250Max/Max_{dataset_name}_BeforePrune.jpg")
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
 criterion = torch.nn.CrossEntropyLoss()
@@ -206,16 +207,16 @@ plt.title('Training Loss Over Epochs')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.legend()
-plt.savefig("Plots/Original/SBMFlipy/Lossoriginal.png")
+plt.savefig("Plots/MaximizeGap/SBM250Max/Max_{dataset_name}_Loss.png")
 
 print("After training GCN, visualizing node embeddings...")
 model.eval()
 out = model(newdata.x, newdata.edge_index)
-visualize(out[test_idx], color=newdata.y[test_idx],legend_labels=["Class 1", "Class 2"],title=f'After training - NMI: {nmi:.3f} ACC: {acc_at_best_loss*100:.1f}',filename = 'Plots/Maximize/SBM250Max/Testsetemb250.jpg')
+visualize(out[test_idx], color=newdata.y[test_idx],legend_labels=["Class 1", "Class 2"],title=f'After training - NMI: {nmi:.3f} ACC: {acc_at_best_loss*100:.1f}',filename = f'Plots/MaximizeGap/SBM250Max/Max_{dataset_name}_Testsetemb.jpg')
 print("Writing Metrics...")
 headers = ['Dataset','GapBefore','GapAfter','BeforeNodeLI','BeforeAdjHomophily','AfterNodeLI','AfterAdjHomophily','TrainingLoss','NMI','TestAcc']
 with open(filename, mode='a', newline='') as file:
               writer = csv.writer(file)
               if file.tell() == 0:
                       writer.writerow(headers)
-              writer.writerow([args.path,beforegap,aftergap,nodelibef,hadjbef,nodeliaf,hadjaf,train_loss,nmi,acc])
+              writer.writerow([args.path,beforegap,aftergap,nodelibef,hadjbef,nodeliaf,hadjaf,train_loss,nmi,acc_at_best_loss])
