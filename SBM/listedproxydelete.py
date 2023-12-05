@@ -9,7 +9,8 @@ eps = 1e-6
 def npgap(G):
   Lmod = nx.normalized_laplacian_matrix(G).todense()
   valsmod,vecsmod = np.linalg.eigh(Lmod)
-  return valsmod[1]
+  
+  return (round(valsmod[1], 4))
 
 def proxy_delete(i,j,deg, vecsold, gap):
     deg = deg[:, np.newaxis]
@@ -33,7 +34,7 @@ def obtain_Lnorm(G):
     return deg,L_norm
 
 def spectral_gap(L_norm):
-        gap, vectors = sp.linalg.eigsh(L_norm, k=2,sigma = 0.1,which='LM' ,ncv=1000)
+        gap, vectors = sp.linalg.eigsh(L_norm, k=2,sigma = 0.1,which='LM')
         return gap[1], vectors
 
 # def update_gap(vecs,L_norm):
