@@ -1,6 +1,13 @@
 # allmycurrentcode
 
 
+Pre-requisites -
+```Python
+1. PyTorch-Geometric
+2. Networkx
+3. Munkres
+```   
+  
 To run experiments on SBM -
 
 ```Python
