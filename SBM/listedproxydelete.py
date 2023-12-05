@@ -34,7 +34,7 @@ def obtain_Lnorm(G):
     return deg,L_norm
 
 def spectral_gap(L_norm):
-        gap, vectors = sp.linalg.eigsh(L_norm, k=2,sigma = 0.1,which='LM')
+        gap, vectors = sp.linalg.eigsh(L_norm, k=2,sigma = 0.1,which='LM',ncv=10000)
         return gap[1], vectors
 
 # def update_gap(vecs,L_norm):
