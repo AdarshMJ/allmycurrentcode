@@ -1,3 +1,4 @@
+import os
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from sklearn.metrics import normalized_mutual_info_score as NMI
@@ -29,10 +30,10 @@ parser.add_argument('--EmbeddingPlotBefore', type=str, default='OriginalPlotBefo
 parser.add_argument('--EmbeddingPlotAfter', type=str, default='OriginalPlotAfter', help='Saving the node embeddings after training')
 args = parser.parse_args()
 
-
+dataset_name = os.path.splitext(os.path.basename(args.path))[0]
 
 def visualize(h, color,legend_labels,title, filename,random_state = 13):
-    z = TSNE(n_components=2).fit_transform(h.detach().cpu().numpy())
+    z = TSNE(n_components=2, perplexity=19).fit_transform(h.detach().cpu().numpy())
     plt.figure(figsize=(5,5))
     plt.xticks([])
     plt.yticks([])
@@ -92,7 +93,7 @@ print(gsbm)
 pos = nx.kamada_kawai_layout(gsbm)
 node_colors = [SBMdata.y[node] for node in gsbm.nodes]
 nx.draw(gsbm, pos=pos, with_labels=False, node_color=node_colors, cmap="Set2")
-plt.savefig("Plots/Original/SBMFlipy/OriginalSBMFlipy.jpg")
+plt.savefig(f"Plots/Original/SBMFlipy/Original_{dataset_name}_SBM.jpg")
 
 
 
@@ -120,7 +121,7 @@ print(model)
 print("Visualizing the node embeddings before training...")
 model.eval()
 out = model(SBMdata.x, SBMdata.edge_index)
-visualize(out, color=SBMdata.y,legend_labels=["Class 1", "Class 2"],title='Embeddings before training',filename="Plots/Original/SBMFlipy/BeforeTrainingSBMFlipy.jpg")
+visualize(out, color=SBMdata.y,legend_labels=["Class 1", "Class 2"],title='Embeddings before training',filename=f"Plots/Original/SBMFlipy/{dataset_name}_BeforeTraining.jpg")
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
 criterion = torch.nn.CrossEntropyLoss()
@@ -175,16 +176,16 @@ plt.title('Training Loss Over Epochs')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.legend()
-plt.savefig("Plots/Original/SBMFlipy/Lossoriginal.png")
+plt.savefig("Plots/Original/SBMFlipy/{dataset_name}_Lossoriginal.png")
 
 print("After training GCN, visualizing node embeddings...")
 model.eval()
 out = model(SBMdata.x, SBMdata.edge_index)
-visualize(out[test_idx], color=SBMdata.y[test_idx],legend_labels=["Class 1", "Class 2"],title=f'After training - NMI: {nmi:.3f} ACC: {acc_at_best_loss*100:.1f}',filename = 'Plots/Original/SBMFlipy/Testsetemb.jpg')
+visualize(out[test_idx], color=SBMdata.y[test_idx],legend_labels=["Class 1", "Class 2"],title=f'After training - NMI: {nmi:.3f} ACC: {acc_at_best_loss*100:.1f}',filename = f'Plots/Original/SBMFlipy/{dataset_name}_Testsetemb.jpg')
 print("Writing Metrics...")
 headers = ['Dataset','NodeLI','EdgeLI','AdjHomophily','TrainingLoss','NMI','TestAcc']
 with open(filename, mode='a', newline='') as file:
               writer = csv.writer(file)
               if file.tell() == 0:
                       writer.writerow(headers)
-              writer.writerow([args.path,nodeli,edgeli,hadj,train_loss,nmi,acc])
+              writer.writerow([args.path,nodeli,edgeli,hadj,train_loss,nmi,acc_at_best_loss])
